@@ -1,0 +1,172 @@
+Description: >
+  JPSalado / Project2: Udagram / ServerSide
+
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+
+Resources:
+  # Security Groups
+  EC2SecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow full outbound internet traffic and restrict inbound internet traffic to port 80 and 22
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp:
+          Fn::ImportValue: !Sub ${EnvironmentName}-VPCCIDR
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        CidrIp: 0.0.0.0/0
+
+  LoadBalancerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Restrict inbound internet traffic to port 80 and restrict outbound internet traffic to port 80
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+# AutoScalingGroup
+  myASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-PRIV1-SN
+        - Fn::ImportValue: !Sub ${EnvironmentName}-PRIV2-SN
+      LaunchConfigurationName: !Ref myLaunchConfig
+      TargetGroupARNs:
+      - !Ref myTargetGroup
+      MaxSize: "4"
+      MinSize: "1"
+
+# LaunchConfiguration
+  myLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      ImageId: ami-003634241a8fcdec0 # Ubuntu 18 image
+      InstanceType: t2.micro # t3.small was the requested one, but t2.micro is free tier elegible
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install unzip awscli -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          aws s3 cp s3://udacity-demo-1/udacity.zip .
+          unzip -o udacity.zip
+      BlockDeviceMappings: 
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: 10 # 10GB diskspace
+      SecurityGroups:
+        - !Ref EC2SecGroup
+      IamInstanceProfile: !Ref ProfileWithS3ReadRole
+
+# TargetGroup
+#   Explanation: It is a property from the autoscaling group. It targets the specified port and checks for responses in the specified protocol.
+#   Based on this criteria, the load balancer may declare the service unhealthy and the autoscaling group may launch new EC2 instances.
+  myTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: / # Main page from the webserver, others may be specified
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-VPCID
+
+# LoadBalancer
+#   Explanation: Asks for specific subnets. It is NOT A SINGLE POINT OF FAILURE (Internally has more than one copy)
+#   A Load Balancer is a device that simply forwards traffic, evenly across a group of servers, known as a Target Group.
+#   The load balancer uses the listener rules to route requests to targets.
+  myLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-PUB1-SN
+        - Fn::ImportValue: !Sub ${EnvironmentName}-PUB2-SN
+      SecurityGroups:
+        - !Ref LoadBalancerSecGroup
+
+# Listener
+#   Explanation: A listener checks for connection requests using its configured protocol and port.
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref myTargetGroup
+      LoadBalancerArn: !Ref myLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref myTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref Listener
+      Priority: 1
+
+  # IAM Role name(s)
+  ProfileWithS3ReadRole:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Roles:
+        - !Ref S3ReadOnlyRole
+
+  S3ReadOnlyRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+
+Outputs:
+  LoadBalancerDNS:
+    Description: A reference to the DNS of the created load balancer
+    Value: !Join [ "", [ "http://", !GetAtt myLoadBalancer.DNSName ] ]
+    Export:
+      Name: !Sub ${EnvironmentName}-LoadBalancerDNS
