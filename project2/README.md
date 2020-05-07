@@ -1,5 +1,7 @@
 # DEPLOY A HIGH-AVAILABILITY WEB APP USING CLOUDFORMATION
-
+## CONSTRUCTED DIAGRAM:
+![Diagram](CloudDiagram.jpg)
+## PROJECT REQUIREMENTS:
 **1. PROJECT INTRODUCTION**
 
 As your final project, you&#39;ll be faced with a real scenario.
@@ -45,7 +47,7 @@ Bonus points if you add http:// in front of the load balancer  **DNS Name**  in 
 
 You will find starter code for the project in the [.yaml file](https://video.udacity-data.com/topher/2019/July/5d391e8b_final-project-starter/final-project-starter.yml), also located in the Resources section of the left sidebar of this page.
 
-**3. OTHER CONSIDERATIONS**
+**4. OTHER CONSIDERATIONS**
 
 You can deploy your servers with an  **SSH Key**  into Public subnets while you are creating the script. This helps with troubleshooting. Once done, move them to your private subnets and remove the  **SSH Key**  from your  **Launch Configuration**.
 
